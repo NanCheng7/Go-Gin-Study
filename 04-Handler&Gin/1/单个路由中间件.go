@@ -1,12 +1,21 @@
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+	"fmt"
+	"github.com/gin-gonic/gin"
+)
+
+//#region sad
+
+//#endregion
 
 func _singleRouterHandler1(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"message": "Hello World1",
 	})
 	c.Abort()
+	fmt.Println("aa: 11")
+	fmt.Println("aa: 22")
 
 }
 func _singleRouterHandler2(c *gin.Context) {

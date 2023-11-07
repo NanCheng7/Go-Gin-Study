@@ -1107,6 +1107,1040 @@ m1 ...out
 
 ![image-20231105140112802](ReadMe.assets/image-20231105140112802.png)
 
-> 如果其中一个请求中间件响应了c.Abort()，后续的请求中间件将不再执行，直接按照顺序走完所有的响应中间件
+> 如果其中一个请求中间件响应了c.Abort()，后续的请求中间件和对应的响应中间件将不再执行，直接按照顺序走完所有的响应中间件
 
-> 也就是说，如果我们**没有使用Next()方法**的话，默认是将**中间件的所有语句视为请求中间件**，而使用**Abort()方法可以拦截请求中间件**，但是如果我们**使用了Next()方法**，会将**中间件内的语句变为请求中间件和响应中间件部分**，并且**跳过**响应中间件，**执行后续**的请求中间件，直到执行完成所有请求中间件，才会**倒序**执行剩下的响应中间件。
+> 也就是说，如果我们**没有使用Next()方法**的话，默认是将**中间件的所有语句视为请求中间件**，而使用**Abort()方法可以拦截后续请求中间件**，但是如果我们**使用了Next()方法**，会将**中间件内的语句变为请求中间件和响应中间件部分**，并且**跳过**响应中间件，**执行后续**的请求中间件，直到执行完成所有请求中间件，才会**倒序**执行剩下的响应中间件。
+
+## 全局注册中间件
+
+```go
+package main
+
+import (
+   "fmt"
+   "github.com/gin-gonic/gin"
+)
+
+func __init1(c *gin.Context) {
+   // 初始化
+   fmt.Println("init1  ..in")
+   c.JSON(200, gin.H{"msg": "init success"})
+   c.Abort()
+   c.Next()
+   fmt.Println("init1  ..out")
+}
+func __init2(c *gin.Context) {
+   // 初始化
+
+   fmt.Println("init2  ..in")
+   c.JSON(200, gin.H{"msg": "init success"})
+   c.Next()
+   
+   fmt.Println("init2  ..out")
+}
+func main() {
+
+   router := gin.Default()
+
+   router.Use(__init1, __init2)
+   router.GET("/1", func(c *gin.Context) {
+      fmt.Println(1)
+      c.JSON(200, gin.H{"11": "11"})
+   })
+   router.GET("/2", func(c *gin.Context) {
+      fmt.Println(2)
+      c.JSON(200, gin.H{"22": "2"})
+   })
+   router.Run(":80")
+
+}
+```
+
+> 这里的Abort()和Next()方法逻辑和单个路由的中间件执行逻辑完全一样，Use方法接收的也是多个HandleFunc
+
+### 中间件传递数据
+
+使用Set设置一个Key-Value
+
+在后续中间件中使用Get接收数据
+
+````go
+package main
+
+import (
+   "fmt"
+   "github.com/gin-gonic/gin"
+)
+
+
+//#region type struct
+
+type UserData struct {
+	Name string
+	Age  int
+}
+
+//#endregion
+
+func _transferData(c *gin.Context) {
+	fmt.Println("User upload a data")
+	data := UserData{
+		"NanCheng",
+		20,
+	}
+	c.Set("userData", data)
+}
+func main(){
+  router := gin.Default()  
+  // tD ==> transferData
+		router.GET("/tD", _transferData, func(c *gin.Context) {
+		//未断言类型
+		tUserdata, _ := c.Get("userData")
+		c.JSON(200, gin.H{"data": tUserdata})
+		// 如果我想要使用数据结构体里面的一个字段，就必须要对它进行断言操作才可访问
+		// 断言类型 ==> userData 是否断言成功 ==> is
+		userData, is := tUserdata.(UserData)
+		if is {
+			c.JSON(200, gin.H{"data": userData.Name})
+		}
+
+	})
+
+	router.Run(":80")
+     
+}
+````
+
+## 路由分组
+
+将一系列的路由放到一个组下，统一管理
+
+例如，以下的路由前面统一加上api的前缀
+
+```go
+package main
+
+import "github.com/gin-gonic/gin"
+
+type UserInfo struct {
+   Name string `json:"name"`
+   Age  int    `json:"age"`
+}
+
+type Response struct {
+   Code int    `json:"code"`
+   Data any    `json:"data"`
+   Msg  string `json:"msg"`
+}
+
+func _userListView(c *gin.Context) {
+   var userList []UserInfo = []UserInfo{
+      {"NanCheng", 666}, {"BeiXiang", 14},
+   }
+   c.JSON(200, Response{0, userList, "success"})
+
+}
+
+func _lgHome(c *gin.Context) {
+   c.JSON(200, gin.H{
+      "name": "john",
+      "age":  20,
+   })
+}
+
+// #region 路由初始化
+func _routerInit(router *gin.Engine) {
+   api := router.Group("api")
+   _userRouterInit(api)
+   _loginRouterInit(api)
+}
+
+//#endregion
+
+// #region 用户路由初始化
+func _userRouterInit(router *gin.RouterGroup) {
+   userController := router.Group("userController")
+   {
+      userController.GET("/home", _lgHome)
+      userController.GET("/userList", _userListView)
+   }
+}
+
+//#endregion
+
+// #region 登录路由初始化
+func _loginRouterInit(router *gin.RouterGroup) {
+   // 登录接口
+   loginController := router.Group("loginController")
+   {
+      loginController.GET("/api", _lgHome)
+   }
+}
+
+//#endregion
+
+func main() {
+
+   router := gin.Default()
+   _routerInit(router)
+   router.Run(":8080")
+}
+```
+
+# 7-日志
+
+**为什么要使用日志**
+
+1. 记录用户操作，擦测用户行为
+2. 记录debug
+
+## gin 自带日志系统
+
+### 输出日志到log文件
+
+```go
+package main
+
+import (
+   "github.com/gin-gonic/gin"
+   "io"
+   "log"
+   "os"
+)
+func main(){
+//存储到文件
+	file, err := os.Create("gin.log")
+	if err != nil {
+		defer recover()
+	}
+
+	//gin.DefaultWriter = file
+	gin.DefaultWriter = io.MultiWriter(file, os.Stdout)
+	router := gin.Default()
+
+	router.GET("/index", func(context *gin.Context) {
+
+	})
+
+	router.Run(":80")
+}
+
+```
+
+### 定义路由格式
+
+启动gin，它会显示所有的路由，默认格式如下：
+
+````go
+[GIN-debug] POST   /foo    --> main.main.func1 (3 handlers)
+[GIN-debug] GET    /bar    --> main.main.func2 (3 handlers)
+[GIN-debug] GET    /status --> main.main.func3 (3 handlers)
+````
+
+````go
+//更改Debug的输出格式
+	gin.DebugPrintRouteFunc = func(httpMethod, absolutePath, handlerName string, nuHandlers int) {
+		log.Printf(
+			"[ NanCheng - INFO ] %s  %s ===> %s  (%d MiddleWires) \n",
+			httpMethod,
+			absolutePath,
+			handlerName,
+			nuHandlers,
+		)
+	}
+/* 输出如下
+2023/11/06 10:45:46 [ NanCheng - INFO ] GET  /index ===> main.main.func2  (3 MiddleWires) 
+2023/11/06 10:45:46 [ NanCheng - INFO ] POST  /index ===> main.main.func2  (3 MiddleWires) 
+2023/11/06 10:45:46 [ NanCheng - INFO ] PUT  /index ===> main.main.func2  (3 MiddleWires) 
+2023/11/06 10:45:46 [ NanCheng - INFO ] DELETE  /index ===> main.main.func2  (3 MiddleWires) 
+*/
+````
+
+### 查看路由
+
+`router.Routers()` 它会返回已注册的路由列表
+
+### 环境切换
+
+![image-20231106104722785](ReadMe.assets/image-20231106104722785.png)
+
+> 如果不想看到这些debug日志，那么我们可以改为release模式
+
+````go
+gin.SetMode(gin.ReleaseMode) router := gin.Default()
+````
+
+### 修改log的显示
+
+默认的log显示
+
+````go
+[GIN] 2023/11/06 - 10:48:42 | 200 |            0s |       127.0.0.1 | GET      "/index"	
+````
+
+
+
+## Logrus
+
+### logrus常用方法
+
+
+
+```go
+package main
+
+import (
+	"fmt"
+	"github.com/sirupsen/logrus"
+)
+
+func main() {
+	logrus.Error("出错了")
+	logrus.Warning("警告")
+	logrus.Warnln("警告")
+	logrus.Infof("信息")
+	logrus.Debugf("debug")
+	logrus.Println("print")
+}
+/*
+time="2023-11-06T12:37:14+08:00" level=error msg="出错了"
+time="2023-11-06T12:37:14+08:00" level=warning msg="警告"
+time="2023-11-06T12:37:14+08:00" level=warning msg="警告"
+time="2023-11-06T12:37:14+08:00" level=info msg="信息"
+time="2023-11-06T12:37:14+08:00" level=info msg=print
+*/
+```
+
+> logrus的日志级别是默认支持INFO级别，低于INFO级别不会输出，级别排列情况如下：
+> ![img](ReadMe.assets/bf308164eb44471a72fb9dbb26b7152d.png)
+
+日志等级
+
+````go
+PanicLevel //会抛一个异常
+FatalLevel //打印日志之后就会退出
+ErrorLevel
+WarnLevel
+InfoLevel
+DebugLevel
+TraceLevel //低级别
+````
+
+
+
+#### 更改日志级别
+
+```go
+logrus.SetLevel(logrus.DebugLevel)
+```
+
+日志级别一般是和系统环境挂钩，例如开发环境，肯定就要显示debug信息，测试环境也是需要的。
+
+线上环境就不需要这些日志，可能只显示 *warnning* 的日志
+
+
+
+#### 设置特定字段
+
+```go
+package main
+
+import (
+   "github.com/sirupsen/logrus"
+)
+
+func main() {
+
+   log := logrus.WithField("app", "study").WithField("NanCheng", "User")
+   log.Error("你好")
+   log2 := logrus.WithFields(logrus.Fields{"app": "study", "NanCheng": "User"})
+   log2.Info("ba")
+
+}
+```
+
+> 通常，在一个应用中、或者应用的一部分中，都有一些固定的Field。
+>
+>
+> 比如在处理用户HTTP请求时，上下文中，所有的日志都会有request_id和user_ip
+>
+>
+> 为了避免每次记录日志都要使用log.WithFileds(log.Fields{"request_id" : request_id  ,  "user_ip" : userip})，我们可以创建一个logrus.Entry实例，这个实力设置默认Fields，在上下文在使用这个logrus.Entry实例记录日志即可。
+
+#### 显示样式 Text 和 JSON
+
+logrus默认是以Text的形式输出日志的，但是可以设置为Json
+
+````go
+package main
+
+import "github.com/sirupsen/logrus"
+
+func main() {
+
+	//logrus.SetFormatter(&logrus.JSONFormatter{})
+	logrus.SetFormatter(
+		&logrus.TextFormatter{
+			ForceColors: true,
+		})
+	logrus.SetLevel(logrus.DebugLevel)
+	logrus.Warn("南城")
+	logrus.Info("南城")
+	logrus.Debug("南城")
+
+}
+
+````
+
+#### 自定义颜色
+
+如果我们想要在控制中显示颜色，一般的做法就是使用
+
+*ANSI* 控制码，用于设置文本颜色。\033 是控制的开始，是八进制数字，[31m 表示将文本设置为红色。
+
+*ANSI* 控制码是用于在终端和控制台中控制文本格式和颜色的一种标准。他们通常用于在命令行界面(CLI)程序中输出彩色文本或者在文本模式下的图形界面(GUI)在输出文本
+
+
+
+```go
+package main
+
+import "fmt"
+
+// 自建函数打印对应颜色的字符串
+
+const (
+   Black int = iota
+   Red
+   Green
+   Yellow
+   Blue
+   Purple
+   Cyan
+   Gray
+)
+
+// _ColorString  返回带颜色的格式化字符串，color : 对应的颜色代码, mode : true=>背景色 false=> 前景色 text :变色文本
+func _ColorString(color int, mode bool, text string) string {
+   var modeCode int
+   if modeCode = 3; mode {
+      modeCode = 4
+   }
+   return fmt.Sprintf("\033[%d%dm%s\033[0m", modeCode, color, text)
+}
+
+func main() {
+
+   fmt.Println(_ColorString(Blue, false, "南城真帅"))
+
+   //fmt.Println("\033[30m This is 黑  \033[0m")
+   //fmt.Println("\033[31m This is 红  \033[0m")
+   //fmt.Println("\033[32m This is 绿  \033[0m")
+   //fmt.Println("\033[33m This is 黄  \033[0m")
+   //fmt.Println("\033[34m This is 蓝  \033[0m")
+   //fmt.Println("\033[35m This is 紫  \033[0m")
+   //fmt.Println("\033[36m This is 蓝绿  \033[0m")
+   //fmt.Println("\033[37m This is 灰  \033[0m")
+   //
+   //fmt.Println("\033[40m This is 黑  \033[0m")
+   //fmt.Println("\033[41m This is 红  \033[0m")
+   //fmt.Println("\033[42m This is 绿  \033[0m")
+   //fmt.Println("\033[43m This is 黄  \033[0m")
+   //fmt.Println("\033[44m This is 蓝  \033[0m")
+   //fmt.Println("\033[45m This is 紫  \033[0m")
+   //fmt.Println("\033[46m This is 蓝绿\033[0m")
+   //fmt.Println("\033[47m This is 灰  \033[0m")
+}
+```
+
+
+
+#### 输出日志到文件
+
+默认的输出是在控制台上
+
+但是后期如果想要寻找日志翻控制台就不太好找了
+
+使用这个函数即可 `func SetOutput(out io.Writer)`，需要我们有一个Writer的对象
+
+````go
+file, _ := os.OpenFile("./logFile/info.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logrus.SetOutput(file)
+````
+
+
+
+#### 同时输出屏幕和文件
+
+````go
+package main
+
+import (
+	"github.com/sirupsen/logrus"
+	"io"
+	"os"
+)
+
+func main() {
+
+	file, _ := os.OpenFile("./logFile/info.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+
+	logrus.SetOutput(io.MultiWriter(file, os.Stdout))
+
+	logrus.Warn("警告")
+	logrus.Error("出错了")
+	logrus.Info("信息")
+	logrus.Debug("debug")
+
+}
+// 使用io.MultiWriter来使用多个Writer
+````
+
+#### 自定义格式
+
+logrus默认的样式太丑，没有颜色输出
+
+我们需要实现`Formatter(entry *logrus.Entry)([]byte,error)`接口
+
+```go
+package main
+
+import (
+   "bytes"
+   "fmt"
+   "github.com/sirupsen/logrus"
+   "io"
+   "os"
+   "path"
+)
+
+const (
+   Black int = iota
+   Red
+   Green
+   Yellow
+   Blue
+   Purple
+   Cyan
+   Gray
+)
+
+type MyFormat struct {
+   Prefix string
+}
+
+func (mf *MyFormat) Format(entry *logrus.Entry) ([]byte, error) {
+   //根据不同的日志等级换色
+   var color int
+
+   switch entry.Level {
+   case logrus.ErrorLevel:
+      color = Red
+   case logrus.WarnLevel:
+      color = Yellow
+   case logrus.InfoLevel:
+      color = Cyan
+   default:
+      color = 9
+   }
+
+   //设置buffer 缓冲区
+   var buffer *bytes.Buffer
+
+   if entry.Buffer == nil {
+      buffer = &bytes.Buffer{}
+   }else {
+      buffer = entry.Buffer
+   }
+
+   //时间格式化
+   formatTime := entry.Time.Format("2006-01-02 15:04:05")
+   //具体的函数名
+   funcName := entry.Caller.Func.Name()
+   //文件的行号
+   fileVal := fmt.Sprintf("%s:%d",path.Base(entry.Caller.File),entry.Caller.Line)
+   // 设置格式
+   fmt.Fprintf(
+      buffer,
+      "[ NanCheng <==> %s ]  \u001B[3%dm[ %s ]\u001B[0m  [ time  => %s ]" +
+         "\n=>[ caller position  => %s ]  [ caller function => %s ]" +
+         "\n=>[ message => %s ] \n",
+         mf.Prefix,color,entry.Level,formatTime,fileVal,funcName, entry.Message)
+   return buffer.Bytes(), nil
+}
+
+func main() {
+   logrus.SetFormatter(&MyFormat{"GIN"})
+   logrus.SetReportCaller(true)
+   //路径
+   path := "./logFile/DiyInfo.log"
+   // 保存文件
+   file,_ := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+
+   logrus.SetLevel(logrus.DebugLevel)
+   logrus.SetOutput(io.MultiWriter(file, os.Stdout))
+   logrus.Info("NanCheng")
+   logrus.Error("NanCheng")
+   logrus.Warn("NanCheng")
+   logrus.Debug("NanCheng")
+}
+```
+
+#### 显示行号
+
+````go
+logrus.SetReportCaller(true)
+````
+
+### HOOK
+
+logrus最令人心动的功能就是其可扩展的HOOK机制了，通过在初始化时为logrus添加hook，logrus可以实现各种扩展功能
+
+
+
+````go
+//logrus在记录Levels()返回的日志级别的消息时会触发Hook
+// 按照Fire放过发定义的内容修改logrus.Entry
+type Hook interface {
+    Levels() []Level
+    Fire(*Entry) error
+}
+````
+
+例如实现一个名称写入日志都加一个Field
+
+我们需要实现两个方法以实现 Hook 接口
+
+```go
+package main
+
+import (
+   "github.com/sirupsen/logrus"
+)
+
+type MyHook struct {
+
+}
+
+// Levels 设置哪些日志才会生效
+func (mh *MyHook) Levels() []logrus.Level{
+    return logrus.AllLevels
+}
+
+// Fire 设置 Field字段
+func (mg *MyHook) Fire(e *logrus.Entry) error {
+   e.Data["NanCheng"] = "Qianjue"
+   return nil
+}
+
+
+func main() {
+   logrus.AddHook(&MyHook{})
+   logrus.Warnln("你好")
+   logrus.Errorf("你好")
+}
+```
+
+#### 文件存放分离
+
+logrus hook 是一个值得深入学习的设计，你可以轻易适用hook来实现多文件写入
+
+比如 error级别的日志独立输出到error.log文件里，其它的都放在一起
+
+```go
+package main
+
+import (
+   "github.com/sirupsen/logrus"
+   "os"
+)
+
+type MyHook struct {
+
+}
+
+// Levels 设置哪些日志才会生效
+func (mh *MyHook) Levels() []logrus.Level{
+    //设置只对error生效
+   return []logrus.Level{logrus.ErrorLevel}
+}
+
+// Fire设置文件存放
+func (mg *MyHook) Fire(e *logrus.Entry) error {
+   
+   file,_ := os.OpenFile("./logFile/error.log",os.O_CREATE|os.O_APPEND|os.O_WRONLY,0666)
+   allMessage, _ := e.String()
+   file.Write([]byte(allMessage))
+   return nil
+}
+
+
+func main() {
+   logrus.AddHook(&MyHook{})
+   logrus.Warnln("你好")
+   logrus.Errorf("你好")
+}
+```
+
+#### 控制台*输出自定义*以及分*文件存放日志*集成
+
+> 这里通过获取 *logrus.New()* 方法获取logger来自定义logger，首先**自定义控制台输出的Formatter**，然后在**Hook里使用Message,_ := mh.Formatter.Format(e)来将Entry的信息通过指定的Formatter进行格式化之后**，再用字节流写入文件
+
+```go
+package main
+
+import (
+   "bytes"
+   "fmt"
+   "github.com/sirupsen/logrus"
+   "os"
+   "path"
+)
+
+const (
+   Black int = iota
+   Red
+   Green
+   Yellow
+   Blue
+   Purple
+   Cyan
+   Gray
+)
+//  定义日志记录文件的位置
+const (
+   ErrorLogPath = "./logFile/error.log"
+   DefaultLogPath= "./logFile/logs.log"
+)
+
+type MyFormat struct {
+   Prefix string
+}
+
+// Format 自定义输入输出格式
+func (mf *MyFormat) Format(entry *logrus.Entry) ([]byte, error) {
+   //根据不同的日志等级换色
+   var color int
+
+   switch entry.Level {
+   case logrus.ErrorLevel:
+      color = Red
+   case logrus.WarnLevel:
+      color = Yellow
+   case logrus.InfoLevel:
+      color = Cyan
+   default:
+      color = 9
+   }
+
+   //设置buffer 缓冲区
+   var buffer *bytes.Buffer
+
+   if entry.Buffer == nil {
+      buffer = &bytes.Buffer{}
+   }else {
+      buffer = entry.Buffer
+   }
+
+   //时间格式化
+   formatTime := entry.Time.Format("2006-01-02 15:04:05")
+   //具体的函数名
+   funcName := entry.Caller.Func.Name()
+   //文件的行号
+   fileVal := fmt.Sprintf("%s:%d",path.Base(entry.Caller.File),entry.Caller.Line)
+   // 设置格式
+   fmt.Fprintf(
+      buffer,
+      "[ NanCheng <==> %s ]  \u001B[3%dm[ %s ]\u001B[0m  [ time  => %s ]" +
+         "\n=>[ caller position  => %s ]  [ caller function => %s ]" +
+         "\n=>[ message => %s ] \n",
+      mf.Prefix,color,entry.Level,formatTime,fileVal,funcName, entry.Message)
+   return buffer.Bytes(), nil
+}
+
+type MyHook struct {
+   Formatter logrus.Formatter
+}
+// Levels 设置哪些日志才会生效
+func (mh *MyHook) Levels() []logrus.Level{
+   return logrus.AllLevels
+}
+
+// Fire 设置 Field字段
+func (mh *MyHook) Fire(e *logrus.Entry) error {
+   //根据hook的Formatter 获取日志信息
+   Message,_ := mh.Formatter.Format(e)
+   //对错误日志进行分流
+   if e.Level == logrus.ErrorLevel {
+      //获取Error日志文件的输入流
+      errorFile,_ := os.OpenFile(ErrorLogPath,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0666)
+      defer errorFile.Close()
+      errorFile.Write(Message)
+   } else {
+      //获取其他日志文件的输入流
+      otherFile,_ := os.OpenFile(DefaultLogPath,os.O_CREATE|os.O_APPEND|os.O_WRONLY,0666)
+      defer otherFile.Close()
+      otherFile.Write(Message)
+   }
+   return nil
+}
+func main() {
+   logger := logrus.New()
+
+   logger.SetLevel(logrus.DebugLevel)
+
+   logger.SetFormatter(&MyFormat{"GIN"})
+
+   logger.SetReportCaller(true)   //开启返回函数名和行号
+
+   hook := &MyHook{
+      Formatter: &logrus.TextFormatter{
+         DisableColors: true,
+   }}
+   logger.AddHook(hook)
+   logger.Error("error")
+   logger.Info("info")
+   logger.Warn("warn")
+   logger.Debug("debug")
+}
+```
+
+## 日志分割
+
+
+
+### 按时间分割
+
+当日志在一个文件累积过多后，在一个日志里寻找就会很麻烦
+
+#### 按时间分割-**Write**方式
+
+```go
+package main
+
+import (
+   "errors"
+   "fmt"
+   "io"
+   "os"
+   "path/filepath"
+   "strings"
+   "time"
+
+   log "github.com/sirupsen/logrus"
+)
+
+// LogFormatter 自定以的logFormatter
+type LogFormatter struct {
+}
+
+// Format 自定义的格式方法
+func (lf *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
+   currentTime := time.Now().Format("2006-01-02")
+   //唤起的文件位置和行号
+   var fileVal string
+   var lineVal int
+   if entry.Caller != nil {
+      fileVal = filepath.Base(entry.Caller.File)
+      lineVal = entry.Caller.Line
+   }
+   msg := fmt.Sprintf("[ %s ] | time => %s | [position =>  %s : %d] \n=>>Msg: %s \n", strings.ToUpper(entry.Level.String()), currentTime, fileVal, lineVal, entry.Message)
+   return []byte(msg), nil
+}
+
+type LogFileWriter struct {
+   File     *os.File
+   LogPath  string
+   FileDate string
+   AppName  string
+}
+
+// Write 写入信息到文件方法
+func (lfw *LogFileWriter) Write(data []byte) (n int, err error) {
+   if lfw == nil {
+      return 0, errors.New("logFileWriter is nil")
+   }
+   if lfw.File == nil {
+      return 0, errors.New("file not opened")
+   }
+
+   //判断是否需要切换日期
+   fileDate := time.Now().Format("2006-01-02")
+   if lfw.FileDate != fileDate {
+      lfw.File.Close()
+      err = os.MkdirAll(fmt.Sprintf("%s/%s", lfw.LogPath, fileDate), os.ModePerm)
+      if err != nil {
+         return 0, err
+      }
+      filename := fmt.Sprintf("%s/%s/%s-%s.log", lfw.LogPath, fileDate, lfw.AppName, fileDate)
+
+      lfw.File, err = os.OpenFile(filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
+      if err != nil {
+         return 0, err
+      }
+   }
+   n, e := lfw.File.Write(data)
+   return n, e
+}
+
+func InitLog(logPath string, appName string) {
+   fileDate := time.Now().Format("2006-01-02")
+   //创建目录
+   err := os.MkdirAll(fmt.Sprintf("%s/%s", logPath, fileDate), os.ModePerm)
+   if err != nil {
+      log.Error(err)
+      return
+   }
+
+   filename := fmt.Sprintf("%s/%s/%s-%s.log", logPath, fileDate, appName, fileDate)
+   file, err := os.OpenFile(filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
+   if err != nil {
+      log.Error(err)
+      return
+   }
+
+   fileWriter := LogFileWriter{file, logPath, fileDate, appName}
+
+   log.SetOutput(os.Stdout)
+   writers := []io.Writer{
+      &fileWriter,
+      os.Stdout}
+   //同时写文件和屏幕
+   fileAndStdoutWriter := io.MultiWriter(writers...)
+   if err == nil {
+      log.SetOutput(fileAndStdoutWriter)
+   } else {
+      log.Info("failed to log to file.")
+   }
+   log.SetReportCaller(true)
+   log.SetFormatter(&LogFormatter{})
+}
+func main() {
+   InitLog("./logFile", "NanCheng")
+   log.Info("NanCheng1")
+   log.Error("NanCheng2")
+   log.Warn("NanCheng3")
+}
+```
+
+#### 按时间分割-**Hook**方式
+
+````go
+package main
+
+import (
+	"errors"
+	"fmt"
+	log "github.com/sirupsen/logrus"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+type MyHook struct {
+	File     *os.File
+	LogPath  string
+	FileDate string
+	AppName  string
+	LF       LogFormatter
+}
+
+func (mh *MyHook) Levels() []log.Level {
+	return log.AllLevels
+}
+
+// LogFormatter 自定以的logFormatter
+type LogFormatter struct {
+}
+
+// Format 自定义的格式方法
+func (lf *LogFormatter) Format(entry *log.Entry) ([]byte, error) {
+	currentTime := time.Now().Format("2006-01-02")
+	//唤起的文件位置和行号
+	var fileVal string
+	var lineVal int
+	if entry.Caller != nil {
+		fileVal = filepath.Base(entry.Caller.File)
+		lineVal = entry.Caller.Line
+	}
+    //打印方式
+	msg := fmt.Sprintf("[ %s ] | time => %s | [position =>  %s : %d] \n=>>Msg: %s \n", strings.ToUpper(entry.Level.String()), currentTime, fileVal, lineVal, entry.Message)
+	return []byte(msg), nil
+}
+
+func (mh *MyHook) Fire(e *log.Entry) error {
+	if mh == nil {
+		return errors.New("logFileWriter is nil")
+	}
+	if mh.File == nil {
+		return errors.New("file not opened")
+	}
+	//根据自定义的Format来获取信息
+	msg, _ := mh.LF.Format(e)
+	currentTime := time.Now().Format("2006-01-02")
+	//判断日期是否相等
+	if mh.FileDate != currentTime {
+		mh.File.Close()
+        //按时间创建新的文件夹
+		err := os.MkdirAll(fmt.Sprintf("%s/%s", mh.LogPath, currentTime), os.ModePerm)
+		if err != nil {
+			return err
+		}
+        // 创建文件
+		fileName := fmt.Sprintf("%s/%s/%s.log", mh.LogPath, currentTime, mh.AppName)
+		mh.File, err = os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+		if err != nil {
+			return err
+		}
+	}
+	_, err := mh.File.Write(msg)
+	return err
+}
+func InitLogrus(logPath, appName string) {
+    //创建初始化的文件夹
+	fileDate := time.Now().Format("2006-01-02")
+	err := os.MkdirAll(fmt.Sprintf("%s/%s", logPath, fileDate), os.ModePerm)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+    //创建初始化文件
+	filename := fmt.Sprintf("%s/%s/%s.log", logPath, fileDate, appName)
+	file, err := os.OpenFile(filename, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+    //获得自定义的日志格式
+	myFormat := LogFormatter{}
+    //初始化hook
+	myHook := MyHook{
+		file,
+		logPath,
+		fileDate,
+		appName,
+		myFormat,
+	}
+    //添加Hook
+	log.AddHook(&myHook)
+    //初始化log
+	log.SetFormatter(&myFormat)
+	log.SetOutput(os.Stdout)
+	log.SetReportCaller(true)
+}
+func main() {
+	InitLogrus("./logFile", "NanCheng-HOOK")
+	for {
+		log.Error("this is a error log" + time.Now().Format("2006-01-02 15:04:05"))
+		time.Sleep(20 * time.Second)
+	}
+}
+
+````
+
+### 按等级分割
+
+按照等级将日志文件分割成如下几个文件：
+
+error.log、warn.log、info.log、all.log
