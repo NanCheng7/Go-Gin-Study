@@ -58,6 +58,7 @@ func main() {
 
 	//router := gin.Default()
 	router := gin.New()
+	gin.Logger()
 
 	//router.Use(gin.LoggerWithFormatter(_printfFormat))
 	router.Use(gin.LoggerWithConfig(gin.LoggerConfig{Formatter: _printfFormat, Output: os.Stdout}))
